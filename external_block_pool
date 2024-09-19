@@ -1,0 +1,102 @@
+#!/bin/bash
+
+device_description=""
+partition_number=""
+cryptsetup_args=()
+
+while [[ $# -gt 0 ]] ; do
+  if [[ $# -gt 1 ]] ; then
+    case $1 in
+      -d|--description)
+          shift
+          device_description="$1"
+          shift
+          continue
+          ;;
+      -n|--partition-number)
+          shift
+          partition_number="$1"
+          shift
+          continue
+          ;;
+      --luks-name)
+          shift
+          luks_name="$1"
+          shift
+          continue
+          ;;
+      --logical-volume-name)
+          shift
+          logical_volume_name="$1"
+          shift
+          continue
+          ;;
+      --luks-header)
+          shift
+          if [[ ! -f "$1" ]] ; then
+            echo "Invalid luks header $1" >&2
+            exit 1
+          fi
+          cryptsetup_args+=( --header "$1" )
+          shift
+          continue
+          ;;
+    esac
+  fi
+  case $1 in
+    *)
+      echo "Unknown argument \"$1\"" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "$luks_name" == "" ]] ; then
+  echo "Missing argument --luks-name" >&2
+  exit 1
+fi
+if [[ "$logical_volume_name" == "" ]] ; then
+  echo "Missing argument --logical-volume-name" >&2
+  exit 1
+fi
+
+device=$(qvm-block | grep -- "$device_description" | grep -Po '^sys-usb:sd[a-z]+'"$partition_number"'(?=\s)')
+if [[ "$device" == "" ]] ; then
+  echo "Could not find device matching $device_description"
+  exit 1
+fi
+
+for attempt in {1..2} ; do
+  device_info=$(qvm-block | grep -P '^'"$device"'\s' | grep -Po '(?<=dom0 \().*(?=\)$)')
+  
+  if [[ "$device_info" == "" ]] ; then
+    if ! qvm-block attach dom0 "$device" ; then
+      echo "Could not find device $device"
+      exit 1
+    fi
+  fi
+done
+if [[ "$device_info" == "" ]] ; then
+  exit 1
+fi
+dom0_dev=$(grep -Po '(?<=frontend-dev=)[a-z]+(?=,|$)' <<< "$device_info")
+if [[ ! -e "/dev/$dom0_dev" ]] ; then
+  echo "Block device $dom0_dev not found" >&2
+  exit 1
+fi
+if ! cryptsetup open "${cryptsetup_args[@]}" "/dev/$dom0_dev" "$luks_name" ; then
+  echo "Could not open /dev/$dom_dev"
+  exit 1
+ fi
+if [[ ! -e "/dev/mapper/$luks_name" ]] ; then
+  echo "Luks device $luks_name not found" >&2
+  exit 1
+fi
+logical_volume_luks_name=$(vgs --noheadings -o pv_name "$logical_volume_name" | grep -Po '(?<=/)[^/]+$')
+if [[ "$logical_volume_luks_name" == "$luks_name" ]] ; then
+  systemctl start "disconnect-qube-usb@$logical_volume_name"
+  lvscan >/dev/null
+else
+  echo "Invalid logical volume name '$logical_volume_name'. Matches luks name '$logical_volume_luks_name', should be '$luks_name'" >&2
+  exit 1
+fi

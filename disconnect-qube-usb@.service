@@ -1,0 +1,12 @@
+[Unit]
+Description=Disconnect USB qube %i
+Requires=qubes-vm@sys-usb.service dm-event.socket
+After=qubes-vm@sys-usb.service dm-event.socket dm-event.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStop=/bin/bash -c "luks_name=$(vgs --noheadings -o pv_name '%i' | grep -Po '(?<=/)[^/]+$') ; local_device=$(cryptsetup status \"$luks_name\" | grep -Po '(?<=device:)\s*/dev/[a-z]+$' | grep -Po '(?<=/dev/)[a-z]+$') ; remote_device=$(qvm-block | grep -P \"frontend-dev=$local_device[,)]\" | grep -Po 'sys-usb:[a-z]+[0-9]*(?=\s)') ; echo Luks \"$luks_name\", device \"$local_device\", remote \"$remote_device\" ; ( echo Deactivating device ; lvchange -an '/dev/%i' ) && ( echo Closing cryptsetup ; cryptsetup close \"$luks_name\" ) && ( echo Detaching remote device ; qvm-block detach dom0 \"$remote_device\" )"
+
+[Install]
+WantedBy=multi-user.target
